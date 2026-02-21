@@ -17,14 +17,12 @@ public:
     void reset(); //reset renamer state
 
 private:
-    std::unordered_map<int, int> regMap; //maps registers
-    int nextNewReg;  //next available register number
+    std::unordered_map<int, int> regMap; // SR -> current VR
+    int nextNewReg;                      // next available VR id
 
-    //helper functions
-    int getNewRegister(int oldReg);
+    // helpers
+    int getMappedRegister(int oldReg);   // USE
+    int assignNewRegister(int oldReg);   // DEF
     void processInstruction(IRNode* node);
     void printInstruction(IRNode* node);
-
-    //track where registers have been seen
-    void ensureRegisterMapped(int oldReg);
 };
