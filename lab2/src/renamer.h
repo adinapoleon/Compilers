@@ -21,8 +21,7 @@ private:
     int nextNewReg;                      // next available VR id
 
     // helpers
-    int getMappedRegister(int oldReg);   // USE
-    int assignNewRegister(int oldReg);   // DEF
+    int getNewRegister(int oldReg);
     void processInstruction(IRNode* node);
     void printInstruction(IRNode* node);
 };

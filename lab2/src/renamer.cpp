@@ -8,8 +8,7 @@ void RegisterRenamer::reset() {
     nextNewReg = 0;
 }
 
-// USE: return current mapping (create if first seen)
-int RegisterRenamer::getMappedRegister(int oldReg) {
+int RegisterRenamer::getNewRegister(int oldReg) {
     if (oldReg == -1) return -1;
 
     auto it = regMap.find(oldReg);
@@ -21,33 +20,21 @@ int RegisterRenamer::getMappedRegister(int oldReg) {
     return newReg;
 }
 
-// DEF: always assign new version and overwrite mapping
-int RegisterRenamer::assignNewRegister(int oldReg) {
-    if (oldReg == -1) return -1;
-
-    int newReg = nextNewReg++;
-    regMap[oldReg] = newReg;
-    return newReg;
-}
-
 void RegisterRenamer::processInstruction(IRNode* node) {
     switch (node->opcode) {
 
         case TOKEN_LOAD:
-            // load sr1 => sr3  (use, def)
-            node->vr1 = getMappedRegister(node->sr1);
-            node->vr3 = assignNewRegister(node->sr3);
+            node->vr1 = getNewRegister(node->sr1);
+            node->vr3 = getNewRegister(node->sr3);
             break;
 
         case TOKEN_STORE:
-            // store sr1 => sr3 (use, use)
-            node->vr1 = getMappedRegister(node->sr1);
-            node->vr3 = getMappedRegister(node->sr3);
+            node->vr1 = getNewRegister(node->sr1);
+            node->vr3 = getNewRegister(node->sr3);
             break;
 
         case TOKEN_LOADI:
-            // loadI imm => sr3 (def)
-            node->vr3 = assignNewRegister(node->sr3);
+            node->vr3 = getNewRegister(node->sr3);
             break;
 
         case TOKEN_ADD:
@@ -55,10 +42,9 @@ void RegisterRenamer::processInstruction(IRNode* node) {
         case TOKEN_MULT:
         case TOKEN_LSHIFT:
         case TOKEN_RSHIFT:
-            // op sr1, sr2 => sr3 (use,use,def)
-            node->vr1 = getMappedRegister(node->sr1);
-            node->vr2 = getMappedRegister(node->sr2);
-            node->vr3 = assignNewRegister(node->sr3);
+            node->vr1 = getNewRegister(node->sr1);
+            node->vr2 = getNewRegister(node->sr2);
+            node->vr3 = getNewRegister(node->sr3);
             break;
 
         default:
