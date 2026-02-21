@@ -95,7 +95,6 @@ IRNode* Parser::parseAll() {
         return head; //return partial IR
     }
 
-    std::cout << "Parsing completed successfully." << std::endl;
     return head;
 }
 
