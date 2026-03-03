@@ -31,7 +31,8 @@ void Allocator::computeNextUse(IRNode* head) {
         switch (nd->opcode) {
         case TOKEN_LOAD:
             nd->nu1 = D(nd->vr1); nd->nu3 = D(nd->vr3);
-            dist[nd->vr1] = idx; dist.erase(nd->vr3); break;
+            dist.erase(nd->vr3);       // erase def first
+            dist[nd->vr1] = idx; break;
         case TOKEN_STORE:
             nd->nu1 = D(nd->vr1); nd->nu3 = D(nd->vr3);
             dist[nd->vr1] = idx; dist[nd->vr3] = idx; break;
@@ -40,7 +41,9 @@ void Allocator::computeNextUse(IRNode* head) {
         case TOKEN_ADD: case TOKEN_SUB: case TOKEN_MULT:
         case TOKEN_LSHIFT: case TOKEN_RSHIFT:
             nd->nu1 = D(nd->vr1); nd->nu2 = D(nd->vr2); nd->nu3 = D(nd->vr3);
-            dist[nd->vr1] = idx; dist[nd->vr2] = idx; dist.erase(nd->vr3); break;
+            dist.erase(nd->vr3);                        // erase def BEFORE setting uses
+            dist[nd->vr1] = idx; dist[nd->vr2] = idx;  // so src==dest case is handled
+            break;
         default: break;
         }
     }
@@ -295,12 +298,17 @@ void Allocator::allocate(IRNode* head) {
 
         case TOKEN_LOAD: {
             p1 = ensure(nd->vr1, nd->nu1, -1, -1, pre);
-            if (nd->nu1 == INT_MAX) freeSlot(p1);
-            p3 = allocDest(p1, -1, pre);
-            if (pr[p3].vr >= 0) vrToPR.erase(pr[p3].vr);
+            // If dest VR == src VR, reuse that register
+            if (nd->vr3 == nd->vr1) p3 = p1;
+            else {
+                if (nd->nu1 == INT_MAX) freeSlot(p1);
+                p3 = allocDest(p1, -1, pre);
+            }
+            if (pr[p3].vr >= 0 && pr[p3].vr != nd->vr3) vrToPR.erase(pr[p3].vr);
             pr[p3] = {nd->vr3, nd->nu3}; vrToPR[nd->vr3] = p3;
             for (auto& s : pre) out(s);
             out("load " + R(p1) + " => " + R(p3));
+            if (p3 != p1 && nd->nu1 == INT_MAX) freeSlot(p1);
             break;
         }
 
@@ -327,11 +335,16 @@ void Allocator::allocate(IRNode* head) {
         case TOKEN_LSHIFT: case TOKEN_RSHIFT: {
             p1 = ensure(nd->vr1, nd->nu1, -1, -1, pre);
             p2 = ensure(nd->vr2, nd->nu2, p1, -1, pre);
-            // Free dead sources before allocating dest (key: enables reuse)
-            if (nd->nu1 == INT_MAX) freeSlot(p1);
-            if (nd->nu2 == INT_MAX) freeSlot(p2);
-            p3 = allocDest(p1, p2, pre);
-            if (pr[p3].vr >= 0) vrToPR.erase(pr[p3].vr);
+            // If dest VR == src VR, reuse that register directly (no need to allocate)
+            if (nd->vr3 == nd->vr1)      p3 = p1;
+            else if (nd->vr3 == nd->vr2) p3 = p2;
+            else {
+                // Free dead sources before allocating dest (enables register reuse)
+                if (nd->nu1 == INT_MAX) freeSlot(p1);
+                if (nd->nu2 == INT_MAX) freeSlot(p2);
+                p3 = allocDest(p1, p2, pre);
+            }
+            if (pr[p3].vr >= 0 && pr[p3].vr != nd->vr3) vrToPR.erase(pr[p3].vr);
             pr[p3] = {nd->vr3, nd->nu3}; vrToPR[nd->vr3] = p3;
             for (auto& s : pre) out(s);
             std::string op;
@@ -341,6 +354,9 @@ void Allocator::allocate(IRNode* head) {
                 case TOKEN_RSHIFT: op="rshift"; break; default: break;
             }
             out(op + " " + R(p1) + ", " + R(p2) + " => " + R(p3));
+            // Free dead sources (if not reused as dest)
+            if (p3 != p1 && nd->nu1 == INT_MAX) freeSlot(p1);
+            if (p3 != p2 && nd->nu2 == INT_MAX) freeSlot(p2);
             break;
         }
 
