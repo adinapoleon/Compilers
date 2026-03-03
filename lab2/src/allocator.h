@@ -1,49 +1,66 @@
 #pragma once
+
 #include "parser.h"
 #include <vector>
 #include <unordered_map>
 #include <string>
 #include <climits>
+#include <iostream>
 
 struct PhysReg {
-    int vr;       // VR in this slot (-1 = free)
-    int nextUse;  // next-use distance (INT_MAX = never)
+    int vr;        // Virtual register currently stored (-1 = free)
+    int nextUse;   // Next-use distance (INT_MAX = dead)
 };
 
 class Allocator {
 public:
     explicit Allocator(int k);
+
+    // Perform register allocation and emit final code
     void allocate(IRNode* head);
 
 private:
-    int k;
-    std::vector<PhysReg> pr;
-    std::unordered_map<int,int> vrToPR;   // vr -> pr index
-    std::unordered_map<int,int> mem;      // vr -> spill address
-    int nextMem;
+    int k;                              // Number of physical registers
+    std::vector<PhysReg> pr;             // Physical register file
+    std::unordered_map<int,int> vrToPR;  // VR -> PR mapping
+    std::unordered_map<int,int> mem;     // VR -> spill memory address
+    int nextMem;                         // Next available spill address
 
-    void  computeNextUse(IRNode* head);
-    int   memAddr(int vr);
-    void  freeSlot(int p);
-    int   findFree();
+    // ===== Analysis =====
+    void computeNextUse(IRNode* head);
 
-    // Return the PR with farthest nextUse, excluding two PR indices
-    int   farthest(int ex1, int ex2);
+    // ===== Register Management =====
+    int  findFree();                     // Find free PR
+    void freeSlot(int p);                // Free PR slot
+    int  farthest(int ex1, int ex2);     // Farthest next-use victim
 
-    // Ensure VR `vr` is in some PR; may emit spills/restores into `out`.
-    // `lock1`, `lock2`: PR indices that must NOT be evicted.
-    int   ensure(int vr, int nu, int lock1, int lock2, std::vector<std::string>& out);
+    // ===== Spilling =====
+    int  memAddr(int vr);                // Get spill memory address
+    void doSpill(int victim,
+                 int addrPR,
+                 std::vector<std::string>& out);
 
-    // Get a free PR for a destination; must not evict lock1 or lock2.
-    int   allocDest(int lock1, int lock2, std::vector<std::string>& out);
+    void doRestore(int vr,
+                   int p,
+                   std::vector<std::string>& out);
 
-    // Spill the value in PR `p` to memory, using `addrPR` as address scratch.
-    // addrPR must be free before calling this.
-    void  doSpill(int p, int addrPR, std::vector<std::string>& out);
+    // ===== Allocation Helpers =====
+    int ensure(int vr,
+               int nu,
+               int lock1,
+               int lock2,
+               std::vector<std::string>& out);
 
-    // Emit restore of VR `vr` into free PR `p`.
-    void  doRestore(int vr, int p, std::vector<std::string>& out);
+    int allocDest(int lock1,
+                  int lock2,
+                  std::vector<std::string>& out);
 
-    std::string R(int p)    { return "r" + std::to_string(p); }
-    void        out(const std::string& s) { std::cout << s << "\n"; }
+    // ===== Output Helpers =====
+    std::string R(int p) const {
+        return "r" + std::to_string(p);
+    }
+
+    void out(const std::string& s) const {
+        std::cout << s << "\n";
+    }
 };
