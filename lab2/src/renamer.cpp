@@ -1,28 +1,39 @@
 #include "renamer.h"
 #include <iostream>
 
+//constructor
 RegisterRenamer::RegisterRenamer() : nextNewReg(0) {}
 
+// reset renamer state
 void RegisterRenamer::reset() {
     regMap.clear();
     nextNewReg = 0;
 }
 
+//map and original reg number to virtual reg number
 int RegisterRenamer::getNewRegister(int oldReg) {
-    if (oldReg == -1) return -1;
+    // if no register specified return
+    if (oldReg == -1) {
+        return -1;
+    }
 
+    //check if reg already mapped
     auto it = regMap.find(oldReg);
-    if (it != regMap.end())
+    if (it != regMap.end()) {
         return it->second;
+    }
 
+
+    //if not alr mapped, map to new number
     int newReg = nextNewReg++;
     regMap[oldReg] = newReg;
     return newReg;
 }
 
+//process single IR instruction
 void RegisterRenamer::processInstruction(IRNode* node) {
     switch (node->opcode) {
-
+        //load & store need to rename 2 reg
         case TOKEN_LOAD:
             node->vr1 = getNewRegister(node->sr1);
             node->vr3 = getNewRegister(node->sr3);
@@ -33,10 +44,12 @@ void RegisterRenamer::processInstruction(IRNode* node) {
             node->vr3 = getNewRegister(node->sr3);
             break;
 
+        // immediate load into single reg
         case TOKEN_LOADI:
             node->vr3 = getNewRegister(node->sr3);
             break;
 
+        //arithmatic registers
         case TOKEN_ADD:
         case TOKEN_SUB:
         case TOKEN_MULT:
@@ -47,6 +60,7 @@ void RegisterRenamer::processInstruction(IRNode* node) {
             node->vr3 = getNewRegister(node->sr3);
             break;
 
+        //ouput, nop, error
         default:
             break;
     }
@@ -62,6 +76,7 @@ void RegisterRenamer::rename(IRNode* head) {
     }
 }
 
+//helper for printing
 void RegisterRenamer::printInstruction(IRNode* node) {
     switch (node->opcode) {
 
@@ -125,6 +140,7 @@ void RegisterRenamer::printInstruction(IRNode* node) {
     std::cout << std::endl;
 }
 
+//print IR for -x flag
 void RegisterRenamer::printRenamedIR(IRNode* head) {
     IRNode* current = head;
     while (current != nullptr) {
