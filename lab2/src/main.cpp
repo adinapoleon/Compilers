@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
             renamer.rename(ir);
             
             // now allocate it
-            Allocater alloc(options.k);
+            Allocator alloc(options.k);
             alloc.allocate(ir);
         }
         
