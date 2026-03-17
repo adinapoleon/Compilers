@@ -25,6 +25,7 @@ private:
     std::unordered_map<int,int> vrToPR;  // VR -> PR mapping
     std::unordered_map<int,int> mem;     // VR -> spill memory address
     int nextMem;                         // Next available spill address
+    int scratchPR;
 
     // ===== Analysis =====
     void computeNextUse(IRNode* head);

@@ -5,7 +5,8 @@
 static const int SPILL_BASE = 32768;
 
 Allocator::Allocator(int k) : k(k), nextMem(SPILL_BASE) {
-    pr.resize(k);
+    scratchPR = k - 1;
+    pr.resize(k - 1);
     for (auto& r : pr) {
         r.vr = -1;
         r.nextUse = INT_MAX;
@@ -92,7 +93,7 @@ void Allocator::freeSlot(int p) {
 }
 
 int Allocator::findFree() {
-    for (int i = 0; i < k; i++)
+    for (int i = 0; i < (int)pr.size(); i++)
         if (pr[i].vr == -1)
             return i;
     return -1;
@@ -102,7 +103,7 @@ int Allocator::farthest(int ex1, int ex2) {
     int best = -1;
     int farNU = -1;
 
-    for (int i = 0; i < k; i++) {
+    for (int i = 0; i < (int)pr.size(); i++) {
         if (i == ex1 || i == ex2) continue;
         if (pr[i].nextUse > farNU) {
             farNU = pr[i].nextUse;
@@ -121,10 +122,8 @@ void Allocator::doSpill(int victim, int addrPR,
     int vr = pr[victim].vr;
     int addr = memAddr(vr);
 
-    out.push_back("loadI " + std::to_string(addr) +
-                  " => " + R(addrPR));
-    out.push_back("store " + R(victim) +
-                  " => " + R(addrPR));
+    out.push_back("loadI " + std::to_string(addr) + " => " + R(addrPR));
+    out.push_back("store " + R(victim) + " => " + R(addrPR));
 
     freeSlot(victim);
 }
@@ -137,18 +136,14 @@ void Allocator::doRestore(int vr, int p,
 
     int addr = it->second;
 
-    out.push_back("loadI " + std::to_string(addr) +
-                  " => " + R(p));
-    out.push_back("load " + R(p) +
-                  " => " + R(p));
+    out.push_back("loadI " + std::to_string(addr) + " => " + R(scratchPR));
+    out.push_back("load " + R(p) + " => " + R(p));
 }
 
 // ============================================================
 // Ensure VR is in a register
 // ============================================================
-int Allocator::ensure(int vr, int nu,
-                      int lock1, int lock2,
-                      std::vector<std::string>& out) {
+int Allocator::ensure(int vr, int nu, int lock1, int lock2, std::vector<std::string>& out) {
 
     if (vr < 0) return -1;
 
@@ -168,12 +163,7 @@ int Allocator::ensure(int vr, int nu,
             freeSlot(victim);
             p = victim;
         } else {
-            int addrPR = findFree();
-            if (addrPR == -1) {
-                std::cerr << "Allocator error: no scratch register\n";
-                exit(1);
-            }
-            doSpill(victim, addrPR, out);
+            doSpill(victim, scratchPR, out);
             p = victim;
         }
     }
@@ -190,8 +180,7 @@ int Allocator::ensure(int vr, int nu,
 // ============================================================
 // Allocate destination register
 // ============================================================
-int Allocator::allocDest(int lock1, int lock2,
-                         std::vector<std::string>& out) {
+int Allocator::allocDest(int lock1, int lock2, std::vector<std::string>& out) {
 
     int p = findFree();
     if (p != -1) return p;
@@ -203,13 +192,7 @@ int Allocator::allocDest(int lock1, int lock2,
         return victim;
     }
 
-    int addrPR = findFree();
-    if (addrPR == -1) {
-        std::cerr << "Allocator error: no scratch register\n";
-        exit(1);
-    }
-
-    doSpill(victim, addrPR, out);
+    doSpill(victim, scratchPR, out);
     return victim;
 }
 
