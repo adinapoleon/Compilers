@@ -110,6 +110,15 @@ int Allocator::farthest(int ex1, int ex2) {
             best = i;
         }
     }
+
+    if (best == -1) {
+        for (int i = 0; i < (int)pr.size(); i++) {
+            if (i != ex1 && i != ex2) {
+                return i;
+            }
+        }
+    }
+
     return best;
 }
 
