@@ -116,8 +116,7 @@ int Allocator::farthest(int ex1, int ex2) {
 // ============================================================
 // Spill and Restore
 // ============================================================
-void Allocator::doSpill(int victim, int addrPR,
-                        std::vector<std::string>& out) {
+void Allocator::doSpill(int victim, int addrPR,std::vector<std::string>& out) {
 
     int vr = pr[victim].vr;
     int addr = memAddr(vr);
@@ -128,8 +127,7 @@ void Allocator::doSpill(int victim, int addrPR,
     freeSlot(victim);
 }
 
-void Allocator::doRestore(int vr, int p,
-                          std::vector<std::string>& out) {
+void Allocator::doRestore(int vr, int p, std::vector<std::string>& out) {
 
     auto it = mem.find(vr);
     if (it == mem.end()) return;   // first definition
@@ -137,7 +135,7 @@ void Allocator::doRestore(int vr, int p,
     int addr = it->second;
 
     out.push_back("loadI " + std::to_string(addr) + " => " + R(scratchPR));
-    out.push_back("load " + R(p) + " => " + R(p));
+    out.push_back("load " + R(scratchPR) + " => " + R(p));
 }
 
 // ============================================================
