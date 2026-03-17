@@ -212,14 +212,15 @@ void Allocator::allocate(IRNode* head) {
 
             case TOKEN_LOAD:
                 p1 = ensure(n->vr1, n->nu1, -1, -1, pre);
-                if (n->nu1 == INT_MAX) freeSlot(p1);
-
+                
                 p3 = allocDest(p1, -1, pre);
                 pr[p3] = { n->vr3, n->nu3 };
                 vrToPR[n->vr3] = p3;
-
+                
                 for (auto& s : pre) out(s);
                 out("load " + R(p1) + " => " + R(p3));
+
+                if (n->nu1 == INT_MAX) freeSlot(p1);
                 break;
 
             case TOKEN_LOADI:
@@ -251,13 +252,11 @@ void Allocator::allocate(IRNode* head) {
                 p1 = ensure(n->vr1, n->nu1, -1, -1, pre);
                 p2 = ensure(n->vr2, n->nu2, p1, -1, pre);
 
-                if (n->nu1 == INT_MAX) freeSlot(p1);
-                if (n->nu2 == INT_MAX) freeSlot(p2);
-
+                
                 p3 = allocDest(p1, p2, pre);
                 pr[p3] = { n->vr3, n->nu3 };
                 vrToPR[n->vr3] = p3;
-
+                
                 for (auto& s : pre) out(s);
 
                 switch (n->opcode) {
@@ -272,6 +271,10 @@ void Allocator::allocate(IRNode* head) {
                 out(op + " " + R(p1) +
                     ", " + R(p2) +
                     " => " + R(p3));
+
+                if (n->nu1 == INT_MAX) freeSlot(p1);
+                if (n->nu2 == INT_MAX) freeSlot(p2);
+                
                 break;
 
             case TOKEN_OUTPUT:
