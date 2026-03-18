@@ -52,8 +52,8 @@ int main(int argc, char* argv[]) {
             renamer.rename(ir);
             
             // now allocate it
-            Allocator alloc(options.k);
-            alloc.allocate(ir);
+            RegisterAllocator alloc(options.k);
+            alloc.allocateRegisters(ir);
         }
         
         // clean up IR nodes
