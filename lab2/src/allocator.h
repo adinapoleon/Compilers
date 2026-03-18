@@ -7,44 +7,46 @@
 #include <climits>
 #include <iostream>
 
-// structure to track physical register state
-struct PhysReg { 
-    int virtualReg;   // -1 = empty
-    int nextUse;   //distance to next use
-}; 
+// Tracks the state of a physical register
+struct PhysicalRegister {
+    int allocatedVirtualRegister;   // -1 indicates free register
+    int nextUseDistance;    // Distance to next use 
+};
 
-class Allocator {
+class RegisterAllocator {
 public:
-    explicit Allocator(int k); //constructor
+    explicit RegisterAllocator(int registerCount); //constructor
     
-    // main allocation function
-    void allocate(IRNode* head);
+    // main allocate function
+    void allocateRegisters(IRNode* instructionList);
 
 private:
-    int k;  // number of registers
-    std::vector<PhysReg> physRegs;    // physical registers
-    std::unordered_map<int, int> virtualToPhysicalMap; // VR to PR mapping
-    std::unordered_map<int, int> spillSlots;   // memory spill locations
-    int nextSpillAddr; // next available memory address
+    int registerCount;  // physical registers available
+    std::vector<PhysicalRegister> physicalRegisters;    // state of each physical register
+    std::unordered_map<int, int> virtualToPhysicalMap;  // map virtual register -> physical register
+    std::unordered_map<int, int> spillLocationMap;  // map virtual register -> memory spill address
+    int nextSpillAddress;   // next address for spills
 
-    // helper functions
-    int scratchRegister() const; // get scratch register index (k-1)
-    void computeNextUse(IRNode* head);  // compute next use for all VRs
-    int memAddr(int virtualReg);    // get or assign memory address for VR
-    void freePhysReg(int physicalReg);   // free a physical register slot
-    int findFreePhysReg(); // find an empty physical register
-    int findRegFarthest(int exclude1, int exclude2); // find register with farthest next use
+    // allocation helpers
+    int getScratchRegisterIndex() const;    // registerCount - 1
+    void computeFurthestNextUse(IRNode* instructionList); 
+    int getOrAssignSpillAddress(int virtualRegister);      
+    
+    // physical register management
+    void releasePhysicalRegister(int physicalRegister);
+    int findFreePhysicalRegister();
+    int findRegisterWithFurthestNextUse(int excludedRegister1, int excludedRegister2);
     
     // spill and restore operations
-    void emitSpill(int physicalReg, std::vector<std::string>& output);
-    void emitRestore(int virtualReg, int physicalReg, std::vector<std::string>& output);
+    void generateSpillCode(int physicalRegister, std::vector<std::string>& outputBuffer);
+    void generateRestoreCode(int virtualRegister, int physicalRegister, std::vector<std::string>& outputBuffer);
     
-    // register management
-    int prepareSourceOperand(int vr, int nu, int lock1, int lock2, std::vector<std::string>& o);
-    int prepareScratchSourceOperand(int vr, int nu, int lock1, std::vector<std::string>& o);
-    int prepareDestinationOperand(int lock1, int lock2, std::vector<std::string>& o);
+    // operand preparation
+    int prepareSourceOperand(int virtualRegister, int nextUseDistance, int lockedRegister1, int lockedRegister2, std::vector<std::string>& outputBuffer);
+    int prepareSourceOperandWithScratch(int virtualRegister, int nextUseDistance, int lockedRegister, std::vector<std::string>& outputBuffer);
+    int prepareDestinationOperand(int lockedRegister1, int lockedRegister2, std::vector<std::string>& outputBuffer);
 
-    // output helpers
-    std::string R(int p) { return "r" + std::to_string(p); }
-    void out(const std::string& s) { std::cout << s << "\n"; }
+    // print helpers
+    std::string formatRegister(int registerIndex) { return "r" + std::to_string(registerIndex); }
+    void emitInstruction(const std::string& instruction) { std::cout << instruction << "\n"; }
 };

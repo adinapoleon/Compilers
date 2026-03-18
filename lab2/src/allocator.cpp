@@ -2,299 +2,457 @@
 #include <iostream>
 #include <climits>
 
-static const int SPILL_BASE = 32768;
+// start address for memory spills
+static const int SPILL_BASE_ADDRESS = 32768;
 
-//constructor
-Allocator::Allocator(int k) : k(k), nextMem(SPILL_BASE) {
-    pr.resize(k);
-    for (auto& r : pr) { 
-        r.vr = -1; 
-        r.nextUse = INT_MAX; 
+// constructor 
+RegisterAllocator::RegisterAllocator(int registerCount) 
+    : registerCount(registerCount), nextSpillAddress(SPILL_BASE_ADDRESS) {
+    
+    // setup physical register tracking
+    physicalRegisters.resize(registerCount);
+    for (auto& registerState : physicalRegisters) { 
+        registerState.allocatedVirtualRegister = -1; // -1 means register is free
+        registerState.nextUseDistance = INT_MAX; // no next use yet
     }
 }
 
-// backward pass to compute next use information
-void Allocator::computeNextUse(IRNode* head) {
-    if (!head) return;
+// pre-pass to compute next use distance for each virtual register
+void RegisterAllocator::computeFurthestNextUse(IRNode* instructionList) {
+    if (!instructionList) return;
 
-    // find tail of IR list
-    IRNode* tail = head;
-    while (tail->next) { 
-        tail = tail->next;
+    // find the last instruction to start backward pass
+    IRNode* lastInstruction = instructionList;
+    while (lastInstruction->next) { 
+        lastInstruction = lastInstruction->next;
     }
 
-    std::unordered_map<int, int> dist;
-    int idx = 0;
-    for (auto* x = head; x; x = x->next) { 
-        idx++;
+    // track distance to next use for each virtual register
+    std::unordered_map<int, int> nextUseDistance;
+    int currentIndex = 0;
+    
+    // count total instructions to set initial distances
+    for (auto* instruction = instructionList; instruction; instruction = instruction->next) { 
+        currentIndex++;
     }
 
-    // walk backwards
-    for (auto* nd = tail; nd; nd = nd->prev) {
-        idx--;
-        auto D = [&](int vr) {
-            if (vr < 0) return INT_MAX;
-            auto it = dist.find(vr);
-            return it == dist.end() ? INT_MAX : it->second;
+    // walk backwards through instructions to update next use distances
+    for (auto* instruction = lastInstruction; instruction; instruction = instruction->prev) {
+        currentIndex--;
+        
+        // helper to get current distance or infinity if not found
+        auto getNextUseDistance = [&](int virtualRegister) {
+            if (virtualRegister < 0) {
+                return INT_MAX;
+            }
+            auto iterator = nextUseDistance.find(virtualRegister);
+            return iterator == nextUseDistance.end() ? INT_MAX : iterator->second;
         };
 
-        switch (nd->opcode) {
+        // update distances based on opcode and register usage
+        switch (instruction->opcode) {
             case TOKEN_LOAD:
-                nd->nu1 = D(nd->vr1); nd->nu3 = D(nd->vr3);
-                dist.erase(nd->vr3); dist[nd->vr1] = idx; break;
-            case TOKEN_STORE:
-                nd->nu1 = D(nd->vr1); nd->nu3 = D(nd->vr3);
-                dist[nd->vr1] = idx; dist[nd->vr3] = idx; break;
-            case TOKEN_LOADI:
-                nd->nu3 = D(nd->vr3); dist.erase(nd->vr3); break;
-            case TOKEN_ADD: case TOKEN_SUB: case TOKEN_MULT:
-            case TOKEN_LSHIFT: case TOKEN_RSHIFT:
-                nd->nu1 = D(nd->vr1); nd->nu2 = D(nd->vr2); nd->nu3 = D(nd->vr3);
-                dist.erase(nd->vr3);
-                dist[nd->vr1] = idx; dist[nd->vr2] = idx;
+                // load uses vr1 and defines vr3
+                instruction->nu1 = getNextUseDistance(instruction->vr1); 
+                instruction->nu3 = getNextUseDistance(instruction->vr3);
+                nextUseDistance.erase(instruction->vr3); // definition kills previous next use
+                nextUseDistance[instruction->vr1] = currentIndex; // use updates next use
                 break;
-            default: break;
+
+            case TOKEN_STORE:
+                // store uses both vr1 and vr3
+                instruction->nu1 = getNextUseDistance(instruction->vr1); 
+                instruction->nu3 = getNextUseDistance(instruction->vr3);
+                nextUseDistance[instruction->vr1] = currentIndex; 
+                nextUseDistance[instruction->vr3] = currentIndex; 
+                break;
+
+            case TOKEN_LOADI:
+                // loadi defines vr3
+                instruction->nu3 = getNextUseDistance(instruction->vr3); 
+                nextUseDistance.erase(instruction->vr3); 
+                break;
+
+            case TOKEN_ADD: 
+            case TOKEN_SUB: 
+            case TOKEN_MULT:
+            case TOKEN_LSHIFT: 
+            case TOKEN_RSHIFT:
+                // arithmetic ops use vr1, vr2 and define vr3
+                instruction->nu1 = getNextUseDistance(instruction->vr1); 
+                instruction->nu2 = getNextUseDistance(instruction->vr2); 
+                instruction->nu3 = getNextUseDistance(instruction->vr3);
+
+                nextUseDistance.erase(instruction->vr3);
+                nextUseDistance[instruction->vr1] = currentIndex; 
+                nextUseDistance[instruction->vr2] = currentIndex;
+                break;
+
+            default: 
+                break;
         }
     }
 }
 
-// get scratch register index
-int Allocator::sc() { 
-    return k - 1; 
+// returns the index of the reserved scratch register
+int RegisterAllocator::getScratchRegisterIndex() const { 
+    return registerCount - 1; 
 }
 
-// get or allocate memory address for a VR
-int Allocator::memAddr(int vr) {
-    auto it = mem.find(vr);
-    if (it != mem.end()) return it->second;
-    mem[vr] = nextMem; 
-    nextMem += 4;
-    return mem[vr];
+// gets memory address for a virtual register that needs to be spilled
+// if it hasn't been spilled before, assigns a new unique address
+int RegisterAllocator::getOrAssignSpillAddress(int virtualRegister) {
+    auto iterator = spillLocationMap.find(virtualRegister);
+    if (iterator != spillLocationMap.end()) {
+        return iterator->second; // return existing address
+    }
+
+    // assign new address and increment for next spill
+    spillLocationMap[virtualRegister] = nextSpillAddress; 
+    nextSpillAddress += 4;  // each spill uses 4 bytes
+
+    return spillLocationMap[virtualRegister];
 }
 
-// free a permanent register slot
-void Allocator::freeSlot(int p) {
-    if (p < 0 || p >= k - 1) return;
-    if (pr[p].vr >= 0) vrToPR.erase(pr[p].vr);
-    pr[p].vr = -1; 
-    pr[p].nextUse = INT_MAX;
+// marks a physical register as free and removes its virtual mapping
+void RegisterAllocator::releasePhysicalRegister(int physicalRegister) {
+    // don't release scratch register or out of bounds
+    if (physicalRegister < 0 || physicalRegister >= registerCount - 1) {
+        return;
+    }
+
+    int virtualRegister = physicalRegisters[physicalRegister].allocatedVirtualRegister;
+    if (virtualRegister >= 0) {
+        virtualToPhysicalMap.erase(virtualRegister);
+    }
+    physicalRegisters[physicalRegister].allocatedVirtualRegister = -1; 
+    physicalRegisters[physicalRegister].nextUseDistance = INT_MAX;
 }
 
-// find an empty register slot
-int Allocator::findFree() {
-    for (int i = 0; i < k - 1; i++)
-        if (pr[i].vr == -1) return i;
-    return -1;
-}
-
-// find register with the farthest next use
-int Allocator::farthest(int ex1, int ex2) {
-    int best = -1, bd = -1;
-    for (int i = 0; i < k - 1; i++) {
-        if (i == ex1 || i == ex2) continue;
-        if (pr[i].nextUse > bd) { 
-            bd = pr[i].nextUse; 
-            best = i; 
+// searches for any physical register that is currently unassigned
+int RegisterAllocator::findFreePhysicalRegister() {
+    for (int registerIndex = 0; registerIndex < registerCount - 1; registerIndex++) {
+        if (physicalRegisters[registerIndex].allocatedVirtualRegister == -1) {
+            return registerIndex;
         }
     }
-    return best;
+    return -1; // no free registers found
 }
 
-// spill a register to memory
-void Allocator::doSpill(int p, std::vector<std::string>& o) {
-    int vr = pr[p].vr;
-    if (vr < 0) return;
-    int addr = memAddr(vr);
-    o.push_back("loadI " + std::to_string(addr) + " => " + R(sc()));
-    o.push_back("store " + R(p) + " => " + R(sc()));
-    vrToPR.erase(vr);
-    pr[p].vr = -1; 
-    pr[p].nextUse = INT_MAX;
-}
-
-// restore a register from memory
-void Allocator::doRestore(int vr, int p, std::vector<std::string>& o) {
-    auto it = mem.find(vr);
-    if (it == mem.end()) return;
-    o.push_back("loadI " + std::to_string(it->second) + " => " + R(sc()));
-    o.push_back("load " + R(sc()) + " => " + R(p));
-}
-
-// ensure a VR is in a permanent register
-int Allocator::ensure(int vr, int nu, int lock1, int lock2, std::vector<std::string>& o) {
-    if (vr < 0) return -1;
+// finds the register whose next use is furthest in the future
+int RegisterAllocator::findRegisterWithFurthestNextUse(int excludedRegister1, int excludedRegister2) {
+    int bestRegister = -1;
+    int furthestDistance = -1;
     
-    // check if already in register
-    auto it = vrToPR.find(vr);
-    if (it != vrToPR.end()) {
-        pr[it->second].nextUse = nu;
-        return it->second;
+    for (int registerIndex = 0; registerIndex < registerCount - 1; registerIndex++) {
+        // don't pick registers that are currently being used as source operands
+        if (registerIndex == excludedRegister1 || registerIndex == excludedRegister2) {
+            continue;
+        }
+        
+        int currentDistance = physicalRegisters[registerIndex].nextUseDistance;
+        if (currentDistance > furthestDistance) { 
+            furthestDistance = currentDistance; 
+            bestRegister = registerIndex; 
+        }
+    }
+    return bestRegister;
+}
+
+// generates code to save a virtual register from a physical register to memory
+void RegisterAllocator::generateSpillCode(int physicalRegister, std::vector<std::string>& outputBuffer) {
+    int virtualRegister = physicalRegisters[physicalRegister].allocatedVirtualRegister;
+    if (virtualRegister < 0) {
+        return; // nothing to spill
+    }
+
+    int spillAddress = getOrAssignSpillAddress(virtualRegister);
+    int scratchReg = getScratchRegisterIndex();
+    
+    // emit loadI to get address into scratch, then store register value
+    outputBuffer.push_back("loadI " + std::to_string(spillAddress) + " => " + formatRegister(scratchReg));
+    outputBuffer.push_back("store " + formatRegister(physicalRegister) + " => " + formatRegister(scratchReg));
+
+    // cleanup mapping
+    virtualToPhysicalMap.erase(virtualRegister);
+    physicalRegisters[physicalRegister].allocatedVirtualRegister = -1; 
+    physicalRegisters[physicalRegister].nextUseDistance = INT_MAX;
+}
+
+// generates code to load a spilled virtual register from memory back to a physical register
+void RegisterAllocator::generateRestoreCode(int virtualRegister, int physicalRegister, std::vector<std::string>& outputBuffer) {
+    auto iterator = spillLocationMap.find(virtualRegister);
+    if (iterator == spillLocationMap.end()) {
+        return; // was never spilled, so nothing to restore
     }
     
-    // find slot or spill
-    int p = findFree();
-    if (p == -1) {
-        int victim = farthest(lock1, lock2);
-        if (pr[victim].nextUse == INT_MAX) freeSlot(victim);
-        else                               doSpill(victim, o);
-        p = victim;
-    }
-    
-    doRestore(vr, p, o);
-    pr[p] = {vr, nu}; 
-    vrToPR[vr] = p;
-    return p;
+    int scratchReg = getScratchRegisterIndex();
+    // emit loadI to get address into scratch, then load value into target register
+    outputBuffer.push_back("loadI " + std::to_string(iterator->second) + " => " + formatRegister(scratchReg));
+    outputBuffer.push_back("load " + formatRegister(scratchReg) + " => " + formatRegister(physicalRegister));
 }
 
-// ensure a VR is in a register, allowing scratch register
-int Allocator::ensureAllowScratch(int vr, int nu, int lock1, std::vector<std::string>& o) {
-    if (vr < 0) return -1;
+// ensures a source operand (virtual register) is in a physical register
+// spills another register if necessary to make room
+int RegisterAllocator::prepareSourceOperand(int virtualRegister, int nextUseDistance, int lockedRegister1, int lockedRegister2, std::vector<std::string>& outputBuffer) {
+    if (virtualRegister < 0) return -1;
     
-    // check if already in permanent slot
-    auto it = vrToPR.find(vr);
-    if (it != vrToPR.end()) {
-        pr[it->second].nextUse = nu;
-        return it->second;
+    // check if virtual register is already in a physical register
+    auto mappingIterator = virtualToPhysicalMap.find(virtualRegister);
+    if (mappingIterator != virtualToPhysicalMap.end()) {
+        int physicalRegister = mappingIterator->second;
+        physicalRegisters[physicalRegister].nextUseDistance = nextUseDistance; // update next use
+        return physicalRegister;
     }
     
-    // try permanent slots first
-    int p = findFree();
-    if (p != -1) {
-        doRestore(vr, p, o);
-        pr[p] = {vr, nu}; 
-        vrToPR[vr] = p;
-        return p;
+    // find a free register or spill one if none available
+    int physicalRegister = findFreePhysicalRegister();
+    if (physicalRegister == -1) {
+        // spill the one that won't be used for the longest time
+        int victimRegister = findRegisterWithFurthestNextUse(lockedRegister1, lockedRegister2);
+        if (physicalRegisters[victimRegister].nextUseDistance == INT_MAX) {
+            releasePhysicalRegister(victimRegister); // no need to spill if never used again
+        } else {
+            generateSpillCode(victimRegister, outputBuffer);
+        }
+        physicalRegister = victimRegister;
+    }
+    
+    // restore the value from memory if it was spilled
+    generateRestoreCode(virtualRegister, physicalRegister, outputBuffer);
+    
+    // update state
+    physicalRegisters[physicalRegister] = {virtualRegister, nextUseDistance}; 
+    virtualToPhysicalMap[virtualRegister] = physicalRegister;
+    return physicalRegister;
+}
+
+// similar to prepareSourceOperand but can use the scratch register as a last resort
+int RegisterAllocator::prepareSourceOperandWithScratch(int virtualRegister, int nextUseDistance, int lockedRegister, std::vector<std::string>& outputBuffer) {
+    if (virtualRegister < 0) return -1;
+    
+    // check if already in a permanent register
+    auto mappingIterator = virtualToPhysicalMap.find(virtualRegister);
+    if (mappingIterator != virtualToPhysicalMap.end()) {
+        int physicalRegister = mappingIterator->second;
+        physicalRegisters[physicalRegister].nextUseDistance = nextUseDistance;
+        return physicalRegister;
+    }
+    
+    // try to allocate a permanent register first
+    int physicalRegister = findFreePhysicalRegister();
+    if (physicalRegister != -1) {
+        generateRestoreCode(virtualRegister, physicalRegister, outputBuffer);
+        physicalRegisters[physicalRegister] = {virtualRegister, nextUseDistance}; 
+        virtualToPhysicalMap[virtualRegister] = physicalRegister;
+        return physicalRegister;
     }
     
     // spill if possible
-    int victim = farthest(lock1, -1);
-    if (victim != -1) {
-        if (pr[victim].nextUse == INT_MAX) freeSlot(victim);
-        else                               doSpill(victim, o);
-        p = victim;
-        doRestore(vr, p, o);
-        pr[p] = {vr, nu}; 
-        vrToPR[vr] = p;
-        return p;
+    int victimRegister = findRegisterWithFurthestNextUse(lockedRegister, -1);
+    if (victimRegister != -1) {
+        if (physicalRegisters[victimRegister].nextUseDistance == INT_MAX) {
+            releasePhysicalRegister(victimRegister);
+        } else {
+            generateSpillCode(victimRegister, outputBuffer);
+        }
+        physicalRegister = victimRegister;
+        generateRestoreCode(virtualRegister, physicalRegister, outputBuffer);
+        physicalRegisters[physicalRegister] = {virtualRegister, nextUseDistance}; 
+        virtualToPhysicalMap[virtualRegister] = physicalRegister;
+        return physicalRegister;
     }
     
-    // last resort: use scratch register
-    p = sc();
-    doRestore(vr, p, o);
-    pr[p] = {vr, nu};
-    return p;
+    // last resort: use scratch register (won't be mapped permanently)
+    physicalRegister = getScratchRegisterIndex();
+    generateRestoreCode(virtualRegister, physicalRegister, outputBuffer);
+    physicalRegisters[physicalRegister] = {virtualRegister, nextUseDistance};
+    return physicalRegister;
 }
 
-// allocate a destination register
-int Allocator::allocDest(int lock1, int lock2, std::vector<std::string>& o) {
-    int p = findFree();
-    if (p != -1) return p;
+// finds a physical register for a destination operand
+int RegisterAllocator::prepareDestinationOperand(int lockedRegister1, int lockedRegister2,
+                                                 std::vector<std::string>& outputBuffer) {
+    int physicalRegister = findFreePhysicalRegister();
+    if (physicalRegister != -1) return physicalRegister;
     
-    int victim = farthest(lock1, lock2);
-    if (victim == -1) {
-        // safety fallback
-        for (int i = 0; i < k - 1; i++) {
-            if (pr[i].nextUse == INT_MAX) { 
-                freeSlot(i); 
-                return i; 
+    // if no free registers, find one to spill
+    int victimRegister = findRegisterWithFurthestNextUse(lockedRegister1, lockedRegister2);
+    if (victimRegister == -1) {
+        // safety fallback if somehow all are locked
+        for (int registerIndex = 0; registerIndex < registerCount - 1; registerIndex++) {
+            if (physicalRegisters[registerIndex].nextUseDistance == INT_MAX) { 
+                releasePhysicalRegister(registerIndex); 
+                return registerIndex; 
             }
         }
-        victim = (lock1 >= 0) ? (lock1 == 0 ? 1 : 0) : 0;
+        victimRegister = (lockedRegister1 >= 0) ? (lockedRegister1 == 0 ? 1 : 0) : 0;
     }
     
-    if (pr[victim].nextUse == INT_MAX) freeSlot(victim);
-    else                               doSpill(victim, o);
-    return victim;
+    if (physicalRegisters[victimRegister].nextUseDistance == INT_MAX) {
+        releasePhysicalRegister(victimRegister); // just free it if no future use
+    } else {
+        generateSpillCode(victimRegister, outputBuffer); // must save to memory
+    }
+    return victimRegister;
 }
 
-// main allocation pass
-void Allocator::allocate(IRNode* head) {
-    if (!head) return;
-    computeNextUse(head);
+// main entry point for register allocation
+// performs a single pass over the instructions and assigns physical registers
+void RegisterAllocator::allocateRegisters(IRNode* instructionList) {
+    if (!instructionList) return;
 
-    for (auto* nd = head; nd; nd = nd->next) {
-        std::vector<std::string> pre;
-        int p1=-1, p2=-1, p3=-1;
+    // compute next use distances first to inform spill decisions
+    computeFurthestNextUse(instructionList);
 
-        switch (nd->opcode) {
+    // iterate through each instruction in the IR
+    for (auto* instruction = instructionList; instruction; instruction = instruction->next) {
+        std::vector<std::string> preInstructionBuffer; // holds spill/restore code
+        int sourceReg1 = -1, sourceReg2 = -1, destReg = -1;
+
+        switch (instruction->opcode) {
             case TOKEN_LOAD: {
-                p1 = ensure(nd->vr1, nd->nu1, -1, -1, pre);
-                if (nd->vr3 == nd->vr1) {
-                    p3 = p1;
+                // prepare source operand (memory address)
+                sourceReg1 = prepareSourceOperand(instruction->vr1, instruction->nu1, -1, -1, preInstructionBuffer);
+
+                // if dest is same as source, we can reuse the register
+                if (instruction->vr3 == instruction->vr1) {
+                    destReg = sourceReg1;
                 } else {
-                    if (nd->nu1 == INT_MAX) freeSlot(p1);
-                    p3 = allocDest(p1, -1, pre);
+                    // free source if it has no future use
+                    if (instruction->nu1 == INT_MAX) releasePhysicalRegister(sourceReg1);
+                    destReg = prepareDestinationOperand(sourceReg1, -1, preInstructionBuffer);
                 }
-                if (pr[p3].vr >= 0 && pr[p3].vr != nd->vr3) vrToPR.erase(pr[p3].vr);
-                pr[p3] = {nd->vr3, nd->nu3}; vrToPR[nd->vr3] = p3;
-                for (auto& s : pre) out(s);
-                out("load " + R(p1) + " => " + R(p3));
-                if (p3 != p1 && nd->nu1 == INT_MAX) freeSlot(p1);
+
+                // update mappings for destination virtual register
+                int previousVirtualReg = physicalRegisters[destReg].allocatedVirtualRegister;
+                if (previousVirtualReg >= 0 && previousVirtualReg != instruction->vr3) {
+                    virtualToPhysicalMap.erase(previousVirtualReg);
+                }
+
+                physicalRegisters[destReg] = {instruction->vr3, instruction->nu3}; 
+                virtualToPhysicalMap[instruction->vr3] = destReg;
+
+                // output all generated spill/restore instructions before the main op
+                for (auto& preInstruction : preInstructionBuffer) emitInstruction(preInstruction);
+                emitInstruction("load " + formatRegister(sourceReg1) + " => " + formatRegister(destReg));
+
+                // cleanup if source not reused
+                if (destReg != sourceReg1 && instruction->nu1 == INT_MAX) releasePhysicalRegister(sourceReg1);
                 break;
             }
 
             case TOKEN_LOADI: {
-                p3 = allocDest(-1, -1, pre);
-                if (pr[p3].vr >= 0) vrToPR.erase(pr[p3].vr);
-                pr[p3] = {nd->vr3, nd->nu3}; vrToPR[nd->vr3] = p3;
-                for (auto& s : pre) out(s);
-                out("loadI " + std::to_string(nd->sr1) + " => " + R(p3));
+                // loadi only has a destination
+                destReg = prepareDestinationOperand(-1, -1, preInstructionBuffer);
+
+                int previousVirtualReg = physicalRegisters[destReg].allocatedVirtualRegister;
+                if (previousVirtualReg >= 0) virtualToPhysicalMap.erase(previousVirtualReg);
+
+                physicalRegisters[destReg] = {instruction->vr3, instruction->nu3}; 
+                virtualToPhysicalMap[instruction->vr3] = destReg;
+
+                for (auto& preInstruction : preInstructionBuffer) emitInstruction(preInstruction);
+                emitInstruction("loadI " + std::to_string(instruction->sr1) + " => " + formatRegister(destReg));
                 break;
             }
 
             case TOKEN_STORE: {
-                p1 = ensure(nd->vr1, nd->nu1, -1, -1, pre);
-                p3 = ensure(nd->vr3, nd->nu3, p1, -1, pre);
-                for (auto& s : pre) out(s);
-                out("store " + R(p1) + " => " + R(p3));
-                if (nd->nu1 == INT_MAX) freeSlot(p1);
-                if (nd->nu3 == INT_MAX) freeSlot(p3);
+                // store uses two source registers (value and address)
+                sourceReg1 = prepareSourceOperand(instruction->vr1, instruction->nu1, -1, -1, preInstructionBuffer);
+                sourceReg2 = prepareSourceOperand(instruction->vr3, instruction->nu3, sourceReg1, -1, preInstructionBuffer);
+
+                for (auto& preInstruction : preInstructionBuffer) emitInstruction(preInstruction);
+                emitInstruction("store " + formatRegister(sourceReg1) + " => " + formatRegister(sourceReg2));
+
+                // free registers if no future uses
+                if (instruction->nu1 == INT_MAX) releasePhysicalRegister(sourceReg1);
+                if (instruction->nu3 == INT_MAX) releasePhysicalRegister(sourceReg2);
                 break;
             }
 
             case TOKEN_ADD: case TOKEN_SUB: case TOKEN_MULT:
             case TOKEN_LSHIFT: case TOKEN_RSHIFT: {
-                bool reuseP1 = (nd->vr3 == nd->vr1);
-                bool reuseP2 = (nd->vr3 == nd->vr2);
+                // arithmetic ops: check if we can reuse source registers for destination
+                bool reuseSource1ForDest = (instruction->vr3 == instruction->vr1);
+                bool reuseSource2ForDest = (instruction->vr3 == instruction->vr2);
 
-                p1 = ensure(nd->vr1, nd->nu1, -1, -1, pre);
-                p2 = ensureAllowScratch(nd->vr2, nd->nu2, p1, pre);
+                // get physical registers for source operands
+                sourceReg1 = prepareSourceOperand(instruction->vr1, instruction->nu1, -1, -1, preInstructionBuffer);
+                // second operand might use scratch if we're out of registers
+                sourceReg2 = prepareSourceOperandWithScratch(instruction->vr2, instruction->nu2, sourceReg1, preInstructionBuffer);
 
-                if      (reuseP1) p3 = p1;
-                else if (reuseP2) p3 = p2;
-                else {
-                    if (nd->nu1 == INT_MAX) freeSlot(p1);
-                    if (nd->nu2 == INT_MAX && p2 != sc()) freeSlot(p2);
-                    if (p2 == sc()) {
-                        p3 = allocDest(p1, -1, pre);
+                if (reuseSource1ForDest) {
+                    destReg = sourceReg1;
+                } else if (reuseSource2ForDest) {
+                    destReg = sourceReg2;
+                } else {
+                    // try to free source registers before allocating destination
+                    if (instruction->nu1 == INT_MAX) releasePhysicalRegister(sourceReg1);
+                    if (instruction->nu2 == INT_MAX && sourceReg2 != getScratchRegisterIndex()) releasePhysicalRegister(sourceReg2);
+
+                    // allocate destination, avoiding registers currently holding sources
+                    if (sourceReg2 == getScratchRegisterIndex()) {
+                        destReg = prepareDestinationOperand(sourceReg1, -1, preInstructionBuffer);
                     } else {
-                        p3 = allocDest(p1, p2, pre);
+                        destReg = prepareDestinationOperand(sourceReg1, sourceReg2, preInstructionBuffer);
                     }
                 }
-                if (pr[p3].vr >= 0 && pr[p3].vr != nd->vr3) vrToPR.erase(pr[p3].vr);
-                pr[p3] = {nd->vr3, nd->nu3}; vrToPR[nd->vr3] = p3;
 
-                for (auto& s : pre) out(s);
-                std::string op;
-                switch (nd->opcode) {
-                    case TOKEN_ADD: op="add"; break; case TOKEN_SUB: op="sub"; break;
-                    case TOKEN_MULT: op="mult"; break; case TOKEN_LSHIFT: op="lshift"; break;
-                    case TOKEN_RSHIFT: op="rshift"; break; default: break;
+                // update destination mapping
+                int previousVirtualReg = physicalRegisters[destReg].allocatedVirtualRegister;
+                if (previousVirtualReg >= 0 && previousVirtualReg != instruction->vr3) {
+                    virtualToPhysicalMap.erase(previousVirtualReg);
                 }
-                out(op + " " + R(p1) + ", " + R(p2) + " => " + R(p3));
 
-                if (p2 == sc()) {
-                    if (pr[sc()].vr >= 0) vrToPR.erase(pr[sc()].vr);
-                    pr[sc()].vr = -1; pr[sc()].nextUse = INT_MAX;
+                physicalRegisters[destReg] = {instruction->vr3, instruction->nu3}; 
+                virtualToPhysicalMap[instruction->vr3] = destReg;
+
+                for (auto& preInstruction : preInstructionBuffer) emitInstruction(preInstruction);
+
+                // determine string opcode
+                std::string operation;
+                switch (instruction->opcode) {
+                    case TOKEN_ADD: operation="add"; break; 
+                    case TOKEN_SUB: operation="sub"; break;
+                    case TOKEN_MULT: operation="mult"; break; 
+                    case TOKEN_LSHIFT: operation="lshift"; break;
+                    case TOKEN_RSHIFT: operation="rshift"; break; 
+                    default: break;
                 }
-                if (p3 != p1 && nd->nu1 == INT_MAX) freeSlot(p1);
-                if (p3 != p2 && p2 != sc() && nd->nu2 == INT_MAX) freeSlot(p2);
+
+                emitInstruction(operation + " " + formatRegister(sourceReg1) + ", " + formatRegister(sourceReg2) + " => " + formatRegister(destReg));
+
+                // special handling if we used the scratch register for an operand
+                int scratchReg = getScratchRegisterIndex();
+                if (sourceReg2 == scratchReg) {
+                    if (physicalRegisters[scratchReg].allocatedVirtualRegister >= 0) {
+                        virtualToPhysicalMap.erase(physicalRegisters[scratchReg].allocatedVirtualRegister);
+                    }
+                    physicalRegisters[scratchReg].allocatedVirtualRegister = -1; 
+                    physicalRegisters[scratchReg].nextUseDistance = INT_MAX;
+                }
+
+                // final cleanup for registers with no future uses
+                if (destReg != sourceReg1 && instruction->nu1 == INT_MAX) releasePhysicalRegister(sourceReg1);
+                if (destReg != sourceReg2 && sourceReg2 != scratchReg && instruction->nu2 == INT_MAX) {
+                    releasePhysicalRegister(sourceReg2);
+                }
                 break;
             }
 
-            case TOKEN_OUTPUT: out("output " + std::to_string(nd->sr1)); break;
-            case TOKEN_NOP: break;
-            default: break;
+            case TOKEN_OUTPUT: 
+                // output just prints a constant, no registers involved
+                emitInstruction("output " + std::to_string(instruction->sr1)); 
+                break;
+
+            case TOKEN_NOP: 
+                // ignore nops
+                break;
+
+            default: 
+                // unknown instruction
+                break;
         }
     }
 }
