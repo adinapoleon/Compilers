@@ -4,7 +4,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 TARGET = 434makeup
 
-SRC = src/main.cpp src/scanner.cpp src/cli.cpp src/parser.cpp src/renamer.cpp src/allocator.cpp src/lvn.cpp
+SRC = src/main.cpp src/scanner.cpp src/cli.cpp src/parser.cpp src/lvn.cpp
 OBJ = $(SRC:.cpp=.o)
 
 .PHONY: clean build

@@ -70,13 +70,12 @@ int main(int argc, char* argv[]) {
         Parser  parser(scanner);
         IRNode* ir = parser.parseAll();
 
-        if (opts.mode == MODE_PARSE_ONLY) {
+        if (opts.mode == MODE_OPT) {
+            LVN lvn;
+            ir = lvn.optimize(ir);
+            lvn.printIR(ir);
+        } else if (opts.mode == MODE_PARSE_ONLY) {
             printRawIR(ir);
-        } else {
-            // MODE_OPT
-            // LVN lvn;
-            // ir = lvn.optimize(ir);
-            // lvn.printIR(ir);
         }
 
         freeIR(ir);
