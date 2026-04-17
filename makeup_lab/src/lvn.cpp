@@ -264,7 +264,7 @@ IRNode* LVN::lvnPass(IRNode* head) {
 }
 
 // backward dead code elimination pass
-IRNode* LVN::dce(IRNode* head) {
+IRNode* LVN::deadCodeElimination(IRNode* head) {
     bool changed = true;
     while (changed) {
         changed = false; // change flag to track if we removed any nodes in this iteration
