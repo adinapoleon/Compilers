@@ -417,8 +417,8 @@ void Parser::printIRNode(IRNode* node) {
     switch (node->opcode) {
         case TOKEN_LOAD:
         case TOKEN_STORE:
-            std::cout << " [ SR!: r" << node->sr1 
-                      << " ] => [ SR3: r]" << node->sr3 << " ]";
+            std::cout << " [ SR1: r" << node->sr1 
+                      << " ] => [ SR3: r" << node->sr3 << " ]";
             break;
 
         case TOKEN_LOADI:
