@@ -3,284 +3,373 @@
 #include <algorithm>
 #include <unordered_set>
 
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
-LVN::LVN() : nextVN(0) {}
 
-// ---------------------------------------------------------------------------
-// Value number helpers
-// ---------------------------------------------------------------------------
+LVN::LVN() : nextVN(0) {}  //constructor
 
+// new value number
 int LVN::newVN() { return nextVN++; }
 
+// get value number for a register, assigning a new one if not seen before
 int LVN::getVN(int reg) {
-    if (reg < 0) return -1;
-    auto it = regVN.find(reg);
-    if (it != regVN.end()) return it->second;
+    if (reg < 0) {
+        return -1;
+    }
+
+    // find existing VN for this register
+    auto it = registerToVN.find(reg);
+    if (it != registerToVN.end()) {
+        return it->second;
+    }
+
     int vn = newVN();
-    regVN[reg] = vn;
+    registerToVN[reg] = vn; // assign new VN to this register
     return vn;
 }
 
+// define that a register has a value number (overwrites any existing mapping)
 void LVN::define(int reg, int vn) {
-    if (reg < 0) return;
-    auto old = regVN.find(reg);
-    if (old != regVN.end()) {
-        int oldVN = old->second;
-        auto cr = vnReg.find(oldVN);
-        if (cr != vnReg.end() && cr->second == reg)
+    if (reg < 0) {
+        return;
+    }
+
+    // finding old VN for this register,
+    auto old = registerToVN.find(reg);
+    if (old != registerToVN.end()) { // if not found
+        int oldVN = old->second; 
+        auto cr = vnReg.find(oldVN); // find the register that oldVN maps to and erase it
+        if (cr != vnReg.end() && cr->second == reg) {
             vnReg.erase(cr);
+        }
     }
-    regVN[reg] = vn;
+    registerToVN[reg] = vn; // assign new VN to this register
 }
 
+
+// get canonical value number for a register (f
 int LVN::canonical(int reg) const {
-    if (reg < 0) return reg;
-    auto rv = regVN.find(reg);
-    if (rv == regVN.end()) return reg;
-    auto cr = vnReg.find(rv->second);
-    if (cr == vnReg.end()) return reg;
-    return cr->second;
+    if (reg < 0) {
+        return reg;
+    }
+
+    // find register that maps to the same VN as this register
+    auto rv = registerToVN.find(reg);
+    if (rv == registerToVN.end()) { // if not found, return original register
+        return reg;
+    }
+
+    auto cr = vnReg.find(rv->second); // find the register that maps to the same VN as this register
+    if (cr == vnReg.end()) { // if not found, return original register
+        return reg;
+    }
+
+    return cr->second; // return the canonical register that maps to the same VN as this register
 }
 
+// get a string key for an expression (op, vn1, vn2)
 std::string LVN::exprKey(TokenType op, int vn1, int vn2) const {
-    if (op == TOKEN_ADD || op == TOKEN_MULT) {
-        if (vn1 > vn2) std::swap(vn1, vn2);
+    if (op == TOKEN_ADD || op == TOKEN_MULT) { // order add and mult operands in ascending order
+        if (vn1 > vn2) {
+            std::swap(vn1, vn2);
+        }
     }
-    return std::to_string(static_cast<int>(op))
-         + "," + std::to_string(vn1)
-         + "," + std::to_string(vn2);
+    //return string key
+    return std::to_string(static_cast<int>(op)) + "," + std::to_string(vn1) + "," + std::to_string(vn2); 
 }
 
+// fold 2 constants for an operation
 std::optional<long long> LVN::fold(TokenType op, long long c1, long long c2) const {
-    switch (op) {
-        case TOKEN_ADD:    return c1 + c2;
-        case TOKEN_SUB:    return c1 - c2;
-        case TOKEN_MULT:   return c1 * c2;
-        case TOKEN_LSHIFT: return static_cast<long long>(
-                               static_cast<unsigned long long>(c1) << c2);
-        case TOKEN_RSHIFT: return static_cast<long long>(
-                               static_cast<unsigned long long>(c1) >> c2);
-        default:           return std::nullopt;
+    switch (op) { // only fold if both operands are constants
+
+        case TOKEN_ADD:    
+            return c1 + c2;
+        case TOKEN_SUB:   
+            return c1 - c2;
+        case TOKEN_MULT:   
+            return c1 * c2;
+
+        case TOKEN_LSHIFT:  //shifts need casting to avoid negative shift counts and sign-extension issues
+            return static_cast<long long>(static_cast<unsigned long long>(c1) << c2);
+        case TOKEN_RSHIFT: 
+            return static_cast<long long>(static_cast<unsigned long long>(c1) >> c2);
+
+        //if not a foldable operation, return nullopt
+        default:           
+            return std::nullopt;
     }
 }
 
+// remove a node from the IR linked list and return new head
 IRNode* LVN::removeNode(IRNode* node, IRNode* head) {
-    if (node->prev) node->prev->next = node->next;
-    if (node->next) node->next->prev = node->prev;
-    IRNode* newHead = (node == head) ? node->next : head;
+    if (node->prev) { // fix prev's next pointer
+        node->prev->next = node->next;
+    }
+
+    if (node->next) { // fix next's prev pointer
+        node->next->prev = node->prev;
+    }
+
+    IRNode* newHead;
+    if (node == head) { // if removing head, update head pointer
+        newHead = node->next;
+    } else {
+        newHead = head; 
+    }
+
     delete node;
     return newHead;
 }
 
-// ---------------------------------------------------------------------------
-// Forward LVN pass
-// ---------------------------------------------------------------------------
 
+// main LVN forward pass
 IRNode* LVN::lvnPass(IRNode* head) {
+
     IRNode* node = head;
-    while (node) {
+    while (node) { //iterate through IR nodes
         IRNode* next = node->next;
 
-        switch (node->opcode) {
+        switch (node->opcode) { // handle each opcode type
 
-            // ---- loadI const => r3 ----------------------------------------
+            // load immediate
             case TOKEN_LOADI: {
-                long long constVal = static_cast<long long>(node->sr1);
-                std::string key = "CONST," + std::to_string(constVal);
-                int vn;
-                auto eit = exprVN.find(key);
-                if (eit != exprVN.end()) {
+                long long constVal = static_cast<long long>(node->sr1); // get constant value from sr1
+                std::string key = "CONST," + std::to_string(constVal); // create key for this constant
+
+                int vn; 
+                auto eit = exprToVN.find(key); // check if this constant already has a VN
+                if (eit != exprToVN.end()) { // if found, reuse existing VN
                     vn = eit->second;
-                } else {
+                } else { // if not found, create new VN and record it
                     vn = newVN();
-                    exprVN[key] = vn;
-                    vnConst[vn] = constVal;
+                    exprToVN[key] = vn;
+                    vnToConst[vn] = constVal;
                 }
+
+                // define that sr3 has this VN, and record that this VN maps to sr3
                 define(node->sr3, vn);
-                if (vnReg.find(vn) == vnReg.end())
+                if (vnReg.find(vn) == vnReg.end()) { // set vnReg mapping if not already set
                     vnReg[vn] = node->sr3;
+                }
+
                 break;
             }
 
-            // ---- Arithmetic: op r1, r2 => r3 --------------------------------
+            // arithmetic and shift operations
             case TOKEN_ADD:
             case TOKEN_SUB:
             case TOKEN_MULT:
             case TOKEN_LSHIFT:
             case TOKEN_RSHIFT: {
-                // Copy propagation on sources
+                //get canonical registers for operands
                 node->sr1 = canonical(node->sr1);
                 node->sr2 = canonical(node->sr2);
 
+                //get VNs for operands
                 int vn1 = getVN(node->sr1);
                 int vn2 = getVN(node->sr2);
 
-                // Constant folding
-                auto c1it = vnConst.find(vn1);
-                auto c2it = vnConst.find(vn2);
-                if (c1it != vnConst.end() && c2it != vnConst.end()) {
-                    auto result = fold(node->opcode, c1it->second, c2it->second);
-                    if (result.has_value()) {
-                        long long folded = result.value();
-                        node->opcode = TOKEN_LOADI;
-                        node->sr1    = static_cast<int>(folded);
-                        node->sr2    = -1;
+                // check if both operands are constants
+                auto c1it = vnToConst.find(vn1);
+                auto c2it = vnToConst.find(vn2);
 
+                if (c1it != vnToConst.end() && c2it != vnToConst.end()) { // if both operands are constants, try to fold
+                    auto result = fold(node->opcode, c1it->second, c2it->second);
+
+                    if (result.has_value()) { // if fold succeeded, 
+
+                        long long folded = result.value(); // get folded constant value
+
+                        // transform this node into a loadI of the folded constant
+                        node->opcode = TOKEN_LOADI;
+                        node->sr1 = static_cast<int>(folded);
+                        node->sr2 = -1;
+
+                        // check if this folded constant already has a VN
                         std::string ckey = "CONST," + std::to_string(folded);
+
                         int vn;
-                        auto ceit = exprVN.find(ckey);
-                        if (ceit != exprVN.end()) {
+                        auto ceit = exprToVN.find(ckey);
+                        if (ceit != exprToVN.end()) { // if found, reuse existing VN
                             vn = ceit->second;
-                        } else {
+                        } else { // if not found, create new VN and record it
                             vn = newVN();
-                            exprVN[ckey] = vn;
-                            vnConst[vn]  = folded;
+                            exprToVN[ckey] = vn;
+                            vnToConst[vn]  = folded;
                         }
+
                         define(node->sr3, vn);
-                        if (vnReg.find(vn) == vnReg.end())
+                        if (vnReg.find(vn) == vnReg.end()) {
                             vnReg[vn] = node->sr3;
+                        }
                         break;
                     }
                 }
 
-                // CSE
-                std::string key = exprKey(node->opcode, vn1, vn2);
-                auto eit = exprVN.find(key);
-                if (eit != exprVN.end()) {
+                // if not foldable
+                std::string key = exprKey(node->opcode, vn1, vn2); // create key for this expression
+
+                auto eit = exprToVN.find(key);
+                if (eit != exprToVN.end()) { // if found, reuse existing VN 
+
                     int existingVN  = eit->second;
                     auto rit = vnReg.find(existingVN);
-                    if (rit != vnReg.end()) {
-                        // Alias sr3 -> existingVN so downstream uses resolve correctly.
+
+                    if (rit != vnReg.end()) { // if the existing VN maps to a register, reuse that register
+
                         define(node->sr3, existingVN);
-                        // Remove this node — its value is already computed.
+                        // Remove this node as its value is already computed.
                         head = removeNode(node, head);
                         node = next;
                         continue;
                     }
                 }
 
-                // New expression
+                // create new VN for this expression and record it
                 int vn = newVN();
-                exprVN[key] = vn;
+                exprToVN[key] = vn;
+
                 define(node->sr3, vn);
                 vnReg[vn] = node->sr3;
                 break;
             }
 
-            // ---- load r1 => r3 ----------------------------------------------
+            // load operation
             case TOKEN_LOAD: {
+                // get canonical register for source
                 node->sr1 = canonical(node->sr1);
-                int vn = newVN();       // fresh VN — memory content unknown
-                define(node->sr3, vn);
+                int vn = newVN();
+                define(node->sr3, vn); //use fresh VN and define it for sr3
                 vnReg[vn] = node->sr3;
                 break;
             }
 
-            // ---- store r1 => r3 ---------------------------------------------
+            // store operation
             case TOKEN_STORE: {
+                // get canonical registers for source and destination
                 node->sr1 = canonical(node->sr1);
                 node->sr3 = canonical(node->sr3);
                 break;
             }
 
-            // ---- output / nop -----------------------------------------------
+            // do nothing for output and nop
             case TOKEN_OUTPUT:
             case TOKEN_NOP:
             default:
                 break;
         }
 
-        node = next;
+        node = next; // move to next node 
     }
+
     return head;
 }
 
-// ---------------------------------------------------------------------------
-// Backward DCE pass
-// Iterates until no more dead instructions are found (handles chains like
-// "loadI => r1; add r1,r2 => r3" where r3 is dead — first iter kills r3,
-// second iter may kill r1 if nothing else uses it).
-// ---------------------------------------------------------------------------
+// backward dead code elimination pass
+IRNode* LVN::deadCodeElimination(IRNode* head) {
 
-IRNode* LVN::dce(IRNode* head) {
-    bool changed = true;
+    bool changed = true; // iterate until no more changes
+
     while (changed) {
-        changed = false;
+        changed = false; // reset change flag for iteration
 
-        // Forward pass: collect all registers that are READ somewhere.
+        // Forward pass: collect all registers that are LIVE somewhere.
         std::unordered_set<int> live;
-        for (IRNode* n = head; n; n = n->next) {
+        for (IRNode* n = head; n; n = n->next) { 
             switch (n->opcode) {
                 case TOKEN_LOAD:
-                    if (n->sr1 >= 0) live.insert(n->sr1);
+                    if (n->sr1 >= 0) {
+                        live.insert(n->sr1);
+                    }
                     break;
+
                 case TOKEN_STORE:
-                    if (n->sr1 >= 0) live.insert(n->sr1);
-                    if (n->sr3 >= 0) live.insert(n->sr3);
+                    if (n->sr1 >= 0) { 
+                        live.insert(n->sr1);
+                    }
+                    if (n->sr3 >= 0) {
+                        live.insert(n->sr3);
+                    }
                     break;
-                case TOKEN_ADD: case TOKEN_SUB: case TOKEN_MULT:
-                case TOKEN_LSHIFT: case TOKEN_RSHIFT:
-                    if (n->sr1 >= 0) live.insert(n->sr1);
-                    if (n->sr2 >= 0) live.insert(n->sr2);
+
+                // arithmetic and shift operations
+                case TOKEN_ADD: 
+                case TOKEN_SUB: 
+                case TOKEN_MULT:
+                case TOKEN_LSHIFT: 
+                case TOKEN_RSHIFT:
+                    if (n->sr1 >= 0) {
+                        live.insert(n->sr1);
+                    }
+                    if (n->sr2 >= 0) {
+                        live.insert(n->sr2);
+                    }
                     break;
+
                 // loadI, output, nop: no register reads that contribute to liveness
                 default:
                     break;
             }
         }
 
-        // Backward pass: remove instructions whose dest is not live and have
-        // no side effects.
+        // Backward pass: remove instructions whose dest is not live and have no side effects.
         IRNode* n = head;
+
         // Walk to tail first for proper backward order
         while (n && n->next) n = n->next;
 
         while (n) {
-            IRNode* prev = n->prev;
+            IRNode* prev = n->prev; // save prev pointer before potentially deleting n
 
-            bool hasSideEffect = (n->opcode == TOKEN_STORE ||
-                                  n->opcode == TOKEN_OUTPUT);
-            int dest = -1;
+            bool hasSideEffect = (n->opcode == TOKEN_STORE || n->opcode == TOKEN_OUTPUT); // check if this instruction has side effects
+            int dest = -1; 
+
             switch (n->opcode) {
+                // load operations write to sr3
                 case TOKEN_LOADI:
                 case TOKEN_LOAD:
-                    dest = n->sr3; break;
-                case TOKEN_ADD: case TOKEN_SUB: case TOKEN_MULT:
-                case TOKEN_LSHIFT: case TOKEN_RSHIFT:
-                    dest = n->sr3; break;
+                    dest = n->sr3; 
+                    break;
+
+                //arithmetic and shift operations write to sr3
+                case TOKEN_ADD: 
+                case TOKEN_SUB: 
+                case TOKEN_MULT:
+                case TOKEN_LSHIFT: 
+                case TOKEN_RSHIFT:
+                    dest = n->sr3; 
+                    break;
+
+                // store, output, nop: no dest register
                 default:
                     break;
             }
 
+            // if this instruction has no side effects and its dest is not live, it is dead code — remove it
             if (!hasSideEffect && dest >= 0 && live.find(dest) == live.end()) {
-                // Dead instruction — remove it
-                head    = removeNode(n, head);
+                head = removeNode(n, head);
                 changed = true;
             }
 
-            n = prev;
+            n = prev; // move to previous node 
         }
     }
     return head;
 }
 
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
 
+// entry point for LVN optimization
 IRNode* LVN::optimize(IRNode* head) {
-    if (!head) return head;
-    head = lvnPass(head);
-    head = dce(head);
+    if (!head) { // if empty IR, just return it
+        return head;
+    }
+
+    head = lvnPass(head); // first do LVN pass to optimize and annotate with VNs
+    head = deadCodeElimination(head); // then do DCE pass to remove any dead code exposed by LVN optimizations
+
     return head;
 }
 
-// ---------------------------------------------------------------------------
-// Print
-// ---------------------------------------------------------------------------
 
+// print helpers
 void LVN::printNode(IRNode* node) const {
     switch (node->opcode) {
         case TOKEN_LOADI:
@@ -310,14 +399,15 @@ void LVN::printNode(IRNode* node) const {
         case TOKEN_OUTPUT:
             std::cout << "output " << node->sr1 << "\n";
             break;
+
         case TOKEN_NOP:
-            // Drop nops — they waste cycles
             break;
         default:
             break;
     }
 }
 
+// print the entire IR linked list
 void LVN::printIR(IRNode* head) const {
     for (IRNode* n = head; n; n = n->next)
         printNode(n);

@@ -7,32 +7,33 @@
 
 class LVN {
 public:
-    LVN();
+    LVN(); //constructor
 
-    // Full optimization pipeline: LVN + DCE. Returns (possibly new) head.
+    // main function: optimize the IR and return new head (may be same as input)
     IRNode* optimize(IRNode* head);
 
-    // Print optimized IR (SR fields).
+    // Print optimized IR
     void printIR(IRNode* head) const;
 
 private:
-    int nextVN;
+    int nextVN; //next available value number
 
-    std::unordered_map<int, int>       regVN;
-    std::unordered_map<int, long long> vnConst;
-    std::unordered_map<std::string, int> exprVN;
-    std::unordered_map<int, int>       vnReg;
+    std::unordered_map<int, int> registerToVN; // map from register to value number
+    std::unordered_map<int, long long> vnToConst; // map from value number to constant value
+    std::unordered_map<std::string, int> exprToVN; // map from expression key to value number
+    std::unordered_map<int, int> vnReg; // map from value number to register
 
-    int  newVN();
-    int  getVN(int reg);
-    void define(int reg, int vn);
-    int  canonical(int reg) const;
-    std::string exprKey(TokenType op, int vn1, int vn2) const;
-    std::optional<long long> fold(TokenType op, long long c1, long long c2) const;
+    int  newVN(); // get a new value number
+    int  getVN(int reg); // get value number for a register
+    void define(int reg, int vn); // define that a register has a value number
+
+    int  canonical(int reg) const; // get canonical value number for a register 
+    std::string exprKey(TokenType op, int vn1, int vn2) const; // get a string key for an expression (op, vn1, vn2)
+    std::optional<long long> fold(TokenType op, long long c1, long long c2) const; // constant folding for an operation and two constants
 
     IRNode* lvnPass(IRNode* head);   // forward LVN pass
-    IRNode* dce(IRNode* head);       // backward DCE pass (iterated)
+    IRNode* deadCodeElimination(IRNode* head); // backward DCE pass 
 
     IRNode* removeNode(IRNode* node, IRNode* head);
-    void    printNode(IRNode* node) const;
+    void printNode(IRNode* node) const;
 };
