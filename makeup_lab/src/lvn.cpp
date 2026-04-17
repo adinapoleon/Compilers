@@ -264,16 +264,51 @@ IRNode* LVN::lvnPass(IRNode* head) {
 }
 
 // backward dead code elimination pass
-IRNode* LVN::deadCodeElimination(IRNode* head) {
-
-    bool changed = true; // iterate until no more changes
-
+IRNode* LVN::dce(IRNode* head) {
+    bool changed = true;
     while (changed) {
-        changed = false; // reset change flag for iteration
+        changed = false; // change flag to track if we removed any nodes in this iteration
+ 
+        // Walk to tail
+        IRNode* n = head;
+        while (n && n->next) n = n->next;
+ 
+        std::unordered_set<int> live; // set of live registers
+ 
+        while (n) {
+            IRNode* prev = n->prev;
+ 
+            bool hasSideEffect = (n->opcode == TOKEN_STORE || n->opcode == TOKEN_OUTPUT);
+            int dest = -1;
 
-        // Forward pass: collect all registers that are LIVE somewhere.
-        std::unordered_set<int> live;
-        for (IRNode* n = head; n; n = n->next) { 
+            // determine destination register for this instruction
+            switch (n->opcode) {
+                case TOKEN_LOADI:
+                case TOKEN_LOAD:
+                case TOKEN_ADD: 
+                case TOKEN_SUB: 
+                case TOKEN_MULT:
+                case TOKEN_LSHIFT: 
+                case TOKEN_RSHIFT:
+                    dest = n->sr3; 
+                    break;
+                default: break;
+            }
+ 
+            // If instruction has no side effects and its destination is not live, it is dead and can be removed.
+            if (!hasSideEffect && dest >= 0 && live.find(dest) == live.end()) {
+                head = removeNode(n, head);
+                changed = true;
+                n = prev;
+                continue;
+            }
+ 
+            // Instruction is kept: def kills liveness, uses add liveness.
+            if (dest >= 0) {
+                live.erase(dest);
+            }
+ 
+            // Add source registers to live set
             switch (n->opcode) {
                 case TOKEN_LOAD:
                     if (n->sr1 >= 0) {
@@ -282,7 +317,7 @@ IRNode* LVN::deadCodeElimination(IRNode* head) {
                     break;
 
                 case TOKEN_STORE:
-                    if (n->sr1 >= 0) { 
+                    if (n->sr1 >= 0) {
                         live.insert(n->sr1);
                     }
                     if (n->sr3 >= 0) {
@@ -290,7 +325,6 @@ IRNode* LVN::deadCodeElimination(IRNode* head) {
                     }
                     break;
 
-                // arithmetic and shift operations
                 case TOKEN_ADD: 
                 case TOKEN_SUB: 
                 case TOKEN_MULT:
@@ -304,55 +338,14 @@ IRNode* LVN::deadCodeElimination(IRNode* head) {
                     }
                     break;
 
-                // loadI, output, nop: no register reads that contribute to liveness
-                default:
+                default: 
                     break;
             }
-        }
-
-        // Backward pass: remove instructions whose dest is not live and have no side effects.
-        IRNode* n = head;
-
-        // Walk to tail first for proper backward order
-        while (n && n->next) n = n->next;
-
-        while (n) {
-            IRNode* prev = n->prev; // save prev pointer before potentially deleting n
-
-            bool hasSideEffect = (n->opcode == TOKEN_STORE || n->opcode == TOKEN_OUTPUT); // check if this instruction has side effects
-            int dest = -1; 
-
-            switch (n->opcode) {
-                // load operations write to sr3
-                case TOKEN_LOADI:
-                case TOKEN_LOAD:
-                    dest = n->sr3; 
-                    break;
-
-                //arithmetic and shift operations write to sr3
-                case TOKEN_ADD: 
-                case TOKEN_SUB: 
-                case TOKEN_MULT:
-                case TOKEN_LSHIFT: 
-                case TOKEN_RSHIFT:
-                    dest = n->sr3; 
-                    break;
-
-                // store, output, nop: no dest register
-                default:
-                    break;
-            }
-
-            // if this instruction has no side effects and its dest is not live, it is dead code — remove it
-            if (!hasSideEffect && dest >= 0 && live.find(dest) == live.end()) {
-                head = removeNode(n, head);
-                changed = true;
-            }
-
-            n = prev; // move to previous node 
+ 
+            n = prev; // move to previous node
         }
     }
-    return head;
+    return head; // return new head after DCE
 }
 
 
