@@ -1,0 +1,73 @@
+#!/usr/bin/python3
+
+### CSCE 434
+### Timing function for SLOCs on Lab 3
+### 
+### Need a separate version for each lab because of the idiosyncratic
+### command line arguments to each lab
+###
+### Based on the original implementation by Keith Cooper for COMP 412 at Rice University
+
+import os, time, calendar, datetime, sys
+from datetime import datetime, date
+from time import process_time
+
+### Code to run the executable on one block and time it
+def timing_run(executable,flags,path_to_block):
+
+    command_line = "timeout 60s " +executable+" "+flags+" "+path_to_block+" >&/dev/null"
+
+    start_tic = time.perf_counter()
+    os.system(command_line)
+    stop_tic  = time.perf_counter()
+    elapsed_time = stop_tic - start_tic
+
+    if (elapsed_time) >= 60: 
+       print("\n--> Execution timeout exceeded!\n")
+    return elapsed_time
+
+### Run a single executable over all the files in the designated directory
+def run_test(testdir,execname,flags): # execname is string name of executable
+
+    for test in sorted(os.listdir(testdir)):
+        if not '.i' in test:
+            continue
+
+        result = timing_run(execname,flags,testdir+test) 
+
+        result = round(result,4) # throw away digits
+
+        print ("File ",test,":  "+str(result)+" seconds")
+
+        if result >= 60:
+            print ("Maximum time exceeded (60 seconds)")
+            print ("Major efficiency problem.\nTimer stops\n")
+            break;
+
+def main():
+    global dir
+
+    argc = len(sys.argv)
+
+    if argc != 2:
+        print ("The timer takes a single argument, the name of your allocator.\n")
+        exit(0)
+
+    # Who, what where, when, and what machine ...
+    username  = os.getlogin()
+    execname = sys.argv[1]
+    dir       = "/mnt/class_files/Classes/CSCE-434/Class/ILOC/Scalability/SLOCs/"
+    today     = date.today().strftime("%m-%d-%y")
+    hostname = os.uname()[1]
+
+    # write header to stdout
+    print ("CSCE 434, Lab 2 Timing Test")
+    print ("Files from '"+dir+"'.\nEach file run once.\n")
+
+    run_test(dir,execname," 15 ") # run the test
+
+    print("\nEnd of run.\n")   	  # mark successful completion
+
+if __name__ == "__main__":
+    main()
+
