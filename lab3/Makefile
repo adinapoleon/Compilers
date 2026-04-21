@@ -4,7 +4,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 TARGET = schedule
 
-SRC = src/main.cpp src/scanner.cpp src/cli.cpp src/parser.cpp src/renamer.cpp
+SRC = src/main.cpp src/scanner.cpp src/cli.cpp src/parser.cpp src/renamer.cpp src/scheduler.cpp
 OBJ = $(SRC:.cpp=.o)
 
 .PHONY: clean build
