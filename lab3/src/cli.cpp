@@ -3,11 +3,10 @@
 #include <stdexcept>
 
 void print_help() {
-	std::cout << "Usage: 434alloc [option] <name>" << std::endl;
+	std::cout << "Usage: schedule [option] <name>" << std::endl;
 	std::cout << "Options:" << std::endl;
 	std::cout << "  -h        	Print this help message" << std::endl;
-	std::cout << "  -x <name> 	Scan, parse, and print renamed ILOC block" << std::endl;
-	std::cout << "  <k> <name> 	Allocate registers using k registers (3 <= k <= 64)" << std::endl;
+	std::cout << "  <name> 		Scan, parse, and print renamed ILOC block" << std::endl;
 }
 
 CLIOptions parse_arguments(int argc, char* argv[]) {
