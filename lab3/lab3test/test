@@ -68,7 +68,7 @@ def lab3_run(execname, filename, dirname):
     global debug
     global need_newline
 
-    sim = '/mnt/class_files/Classes/CSCE-434/Class/lab3/sim'
+    sim = '~/Compilers/lab3/lab3test/sim'
 
     #get input for simulator
     if debug != 0:
